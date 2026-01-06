@@ -153,7 +153,29 @@ function createEventSheetFromTemplate_(ss, newName) {
   const template = ss.getSheetByName(SHEET_EVENT_TEMPLATE);
   const copied = template.copyTo(ss).setName(name);
   copied.getRange(2, 1, copied.getMaxRows() - 1, copied.getMaxColumns()).clearContent();
+
+  // ★追加：擬似ボタンエリアを作る
+  setupActionArea_(copied);
+
   return copied;
+}
+
+/***********************
+ * 会シートに擬似ボタンエリア（チェックボックス）を設置
+ ***********************/
+function setupActionArea_(sheet) {
+  // タイトル
+  sheet.getRange("L1").setValue("デモ操作（チェックで実行）");
+  sheet.getRange("L2").setValue("☑ 未入金メール送信（出席者のみ）");
+  sheet.getRange("L3").setValue("☑ 入金済にした行へ入金日時を反映");
+  sheet.getRange("L4").setValue("☑ 入金トリガー設定（B）");
+
+  // チェックボックス
+  sheet.getRange("M2:M4").insertCheckboxes().setValue(false);
+
+  // 見た目（任意）
+  sheet.setColumnWidth(12, 220); // L
+  sheet.setColumnWidth(13, 30);  // M
 }
 
 /***********************
@@ -495,8 +517,13 @@ function installPaymentOnEditTrigger_() {
  * onEdit トリガーで動く関数
  * - 会_ で始まるシートのみ対象
  * - 編集列が「入金状況」列の時だけ処理
+ * - チェックボックス擬似ボタンの処理も担当
  */
 function onPaymentStatusEdit_(e) {
+  // ★追加：擬似ボタン処理
+  if (handleActionCheckbox_(e)) return;
+
+  // --- ここから既存の「入金状況 → 入金確認日時」処理 ---
   const range = e.range;
   const sheet = range.getSheet();
 
@@ -522,12 +549,9 @@ function onPaymentStatusEdit_(e) {
   const newValue = String(range.getValue() || "").trim();
   const confirmedCell = sheet.getRange(range.getRow(), confirmedCol);
 
-  // 入金済 → 日時を自動入力（未入力時のみ）
-  if (newValue === "入金済") {
-    const current = String(confirmedCell.getValue() || "").trim();
-    if (!current) {
-      confirmedCell.setValue(formatDateTime_(new Date()));
-    }
+  // 入金済 → 日時を自動入力（デモ映えのため常に更新）
+  if (newValue === "入金済" || newValue === "入金") {
+    confirmedCell.setValue(formatDateTime_(new Date()));
     return;
   }
 
@@ -538,6 +562,93 @@ function onPaymentStatusEdit_(e) {
   }
 
   // それ以外（例：要確認など）→ 何もしない
+}
+
+/***********************
+ * チェックボックス擬似ボタンの処理
+ * M2:M4 のチェックで各機能を実行
+ ***********************/
+function handleActionCheckbox_(e) {
+  const range = e.range;
+  const sheet = range.getSheet();
+  if (!sheet.getName().startsWith("会_")) return false;
+
+  // M2:M4 が操作チェックボックス（列M=13）
+  const col = range.getColumn();
+  const row = range.getRow();
+  if (col !== 13) return false; // M列以外は無視
+  if (![2, 3, 4].includes(row)) return false;
+
+  const checked = range.getValue() === true;
+  if (!checked) return true; // OFFは何もしない（処理済扱い）
+
+  try {
+    if (row === 2) {
+      // 未入金メール送信（出席者のみ）
+      demo_sendPaymentReminders_forSheet_(sheet);
+    } else if (row === 3) {
+      // ここは「入金済にした行へ入金日時反映」など別処理に差し替え可
+      SpreadsheetApp.getUi().alert("入金状況を変更すると自動で入金確認日時が入ります（G列を編集してください）。");
+    } else if (row === 4) {
+      // トリガー設定
+      installPaymentOnEditTrigger_();
+    }
+  } finally {
+    // チェックを戻す（ボタンっぽくする）
+    range.setValue(false);
+  }
+  return true;
+}
+
+/***********************
+ * 特定の会シートだけを対象に未入金メール送信（出席者のみ）
+ * 既存の demo_sendPaymentReminders_latestEventSheet のシート指定版
+ ***********************/
+function demo_sendPaymentReminders_forSheet_(sheet) {
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0].map(h => String(h).trim());
+  const idx = indexMap_(headers);
+
+  const required = ["氏名", "メールアドレス", "入金状況", "出欠"];
+  for (const k of required) {
+    if (idx[k] === undefined) throw new Error(`会シートに「${k}」列が見つかりません：${k}`);
+  }
+
+  const subject = "【ご確認】未入金のご案内";
+  const today = formatDate_(new Date());
+
+  let count = 0;
+  for (let r = 1; r < values.length; r++) {
+    const row = values[r];
+    const name = row[idx["氏名"]];
+    const email = row[idx["メールアドレス"]];
+    const pay = String(row[idx["入金状況"]] || "").trim();
+    const attendance = String(row[idx["出欠"]] || "").trim();
+
+    if (!name || !email) continue;
+    if (attendance !== "出席") continue;
+    if (!(pay === "" || pay === "未入金")) continue;
+
+    const body =
+`${name} 様
+
+お世話になっております。
+本日（${today}）時点で、入金状況が「未入金」となっております。
+お手数ですが、ご確認のうえお支払い手続きをお願いいたします。
+※すでにお支払い済みの場合は、本メールは行き違いとなりますためご容赦ください。
+
+どうぞよろしくお願いいたします。`;
+
+    MailApp.sendEmail({ to: String(email), subject, body });
+    count++;
+
+    // 備考に記録
+    if (idx["備考"] !== undefined) {
+      sheet.getRange(r + 1, idx["備考"] + 1).setValue(`催促メール送信：${formatDateTime_(new Date())}`);
+    }
+  }
+
+  SpreadsheetApp.getUi().alert(`未入金（出席者のみ）へ ${count} 件送信しました。\n対象シート：${sheet.getName()}`);
 }
 
 function onOpen() {
