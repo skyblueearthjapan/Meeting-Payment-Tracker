@@ -203,6 +203,44 @@ function setupMasterActionArea_() {
 }
 
 /***********************
+ * 全シートに3点ボタンUIを作成
+ * フォーム回答シートは除外
+ ***********************/
+function setupActionAreaAllSheets_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+
+  let count = 0;
+  for (const sh of sheets) {
+    // フォーム回答シートなど、触りたくないものは除外
+    if (sh.getName().startsWith("フォームの回答")) continue;
+
+    setup3ButtonsArea_(sh);
+    count++;
+  }
+
+  SpreadsheetApp.getUi().alert(`全 ${count} シートに「3点セット（チェックボタン）」を作成しました。`);
+}
+
+/***********************
+ * 個別シートに3点ボタンエリアを設置
+ ***********************/
+function setup3ButtonsArea_(sheet) {
+  // 既にある場合は上書き（見た目更新したい時に便利）
+  sheet.getRange("L1").setValue("デモ操作（チェックで実行）");
+
+  sheet.getRange("L2").setValue("☑ 回作成＋送信（フォーム・個別URL）");
+  sheet.getRange("L3").setValue("☑ 未入金メール送信（出席者のみ）");
+  sheet.getRange("L4").setValue("☑ 入金トリガー設定（B）");
+
+  sheet.getRange("M2:M4").insertCheckboxes();
+  sheet.getRange("M2:M4").setValue(false);
+
+  sheet.setColumnWidth(12, 260); // L
+  sheet.setColumnWidth(13, 30);  // M
+}
+
+/***********************
  * 名簿読み込み（有効フラグ=TRUE/有効 を対象）
  ***********************/
 function getActiveMembers_(ss) {
@@ -543,8 +581,12 @@ function installPaymentOnEditTrigger_() {
  * - 編集列が「入金状況」列の時だけ処理
  * - チェックボックス擬似ボタンの処理も担当
  * - 名簿マスターのチェックボックス操作も担当
+ * - 全シート共通の3点ボタン処理も担当
  */
 function onPaymentStatusEdit_(e) {
+  // ★全シート共通：3点チェックボタン処理
+  if (handleGlobal3Buttons_(e)) return;
+
   // ★名簿マスターのチェック操作
   if (handleMasterActionCheckbox_(e)) return;
 
@@ -593,7 +635,59 @@ function onPaymentStatusEdit_(e) {
 }
 
 /***********************
- * チェックボックス擬似ボタンの処理
+ * 全シート共通：3点チェックボタン処理
+ * どのシートからでも同じ3機能が使える
+ ***********************/
+function handleGlobal3Buttons_(e) {
+  const range = e.range;
+  const sheet = range.getSheet();
+
+  // フォーム回答シートは除外
+  if (sheet.getName().startsWith("フォームの回答")) return false;
+
+  // 名簿マスター・会_シートは個別ハンドラに任せる
+  if (sheet.getName() === SHEET_MASTER) return false;
+  if (sheet.getName().startsWith("会_")) return false;
+
+  // チェックボックス列 M(13)、行2〜4のみ反応
+  if (range.getColumn() !== 13) return false;
+  if (![2, 3, 4].includes(range.getRow())) return false;
+
+  // ONになった時だけ動く
+  const checked = range.getValue() === true;
+  if (!checked) return true;
+
+  try {
+    const row = range.getRow();
+
+    if (row === 2) {
+      // 回作成＋送信
+      demo_createEvent_and_sendMails();
+      return true;
+
+    } else if (row === 3) {
+      // 未入金メール送信（出席者のみ）
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      const latest = getLatestEventSheet_(ss);
+      if (!latest) throw new Error("会_ で始まる会シートが見つかりません。");
+      demo_sendPaymentReminders_forSheet_(latest);
+      return true;
+
+    } else if (row === 4) {
+      // 入金トリガー設定（B）
+      installPaymentOnEditTrigger_();
+      return true;
+    }
+  } finally {
+    // チェックを必ず戻す（ボタン化）
+    range.setValue(false);
+  }
+
+  return true;
+}
+
+/***********************
+ * チェックボックス擬似ボタンの処理（会_シート専用）
  * M2:M4 のチェックで各機能を実行
  ***********************/
 function handleActionCheckbox_(e) {
@@ -820,5 +914,6 @@ function onOpen() {
     .addItem("回作成＋送信（フォーム・個別URL）", "demo_createEvent_and_sendMails")
     .addSeparator()
     .addItem("名簿マスターに操作エリア設置", "setupMasterActionArea_")
+    .addItem("全シートに3点ボタン設置", "setupActionAreaAllSheets_")
     .addToUi();
 }
