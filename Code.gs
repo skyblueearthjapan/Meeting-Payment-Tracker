@@ -179,6 +179,30 @@ function setupActionArea_(sheet) {
 }
 
 /***********************
+ * 名簿マスターに擬似ボタンエリア（チェックボックス）を設置
+ ***********************/
+function setupMasterActionArea_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName(SHEET_MASTER);
+  if (!sh) throw new Error("名簿マスターが見つかりません。");
+
+  // 表示文言
+  sh.getRange("L1").setValue("名簿マスター：デモ操作（チェックで実行）");
+  sh.getRange("L2").setValue("☑ 回答者IDを自動発行（空欄のみ）");
+  sh.getRange("L3").setValue("☑ 有効フラグを一括TRUE（空欄のみ）");
+  sh.getRange("L4").setValue("☑ テストメール送信（有効な全員）");
+
+  // チェックボックス
+  sh.getRange("M2:M4").insertCheckboxes().setValue(false);
+
+  // 見た目
+  sh.setColumnWidth(12, 260); // L
+  sh.setColumnWidth(13, 30);  // M
+
+  SpreadsheetApp.getUi().alert("名簿マスターに操作エリアを設置しました。");
+}
+
+/***********************
  * 名簿読み込み（有効フラグ=TRUE/有効 を対象）
  ***********************/
 function getActiveMembers_(ss) {
@@ -518,9 +542,13 @@ function installPaymentOnEditTrigger_() {
  * - 会_ で始まるシートのみ対象
  * - 編集列が「入金状況」列の時だけ処理
  * - チェックボックス擬似ボタンの処理も担当
+ * - 名簿マスターのチェックボックス操作も担当
  */
 function onPaymentStatusEdit_(e) {
-  // ★追加：擬似ボタン処理
+  // ★名簿マスターのチェック操作
+  if (handleMasterActionCheckbox_(e)) return;
+
+  // ★会シートのチェック操作
   if (handleActionCheckbox_(e)) return;
 
   // --- ここから既存の「入金状況 → 入金確認日時」処理 ---
@@ -601,6 +629,139 @@ function handleActionCheckbox_(e) {
 }
 
 /***********************
+ * 名簿マスターのチェックボックス擬似ボタン処理
+ * M2:M4 のチェックで各機能を実行
+ ***********************/
+function handleMasterActionCheckbox_(e) {
+  const range = e.range;
+  const sheet = range.getSheet();
+
+  // 名簿マスターのみ
+  if (sheet.getName() !== SHEET_MASTER) return false;
+
+  // M2:M4 が操作チェックボックス（列M=13）
+  const col = range.getColumn();
+  const row = range.getRow();
+  if (col !== 13) return false;
+  if (![2, 3, 4].includes(row)) return false;
+
+  const checked = range.getValue() === true;
+  if (!checked) return true; // OFFは何もしない（処理済扱い）
+
+  try {
+    if (row === 2) {
+      // 回答者IDを自動発行（空欄のみ）
+      fillResponderIdsIfEmpty_(sheet);
+    } else if (row === 3) {
+      // 有効フラグを一括TRUE（空欄のみ）
+      fillActiveFlagIfEmpty_(sheet);
+    } else if (row === 4) {
+      // テストメール送信（全員）
+      sendTestMailToAllFromMaster_(sheet);
+    }
+  } finally {
+    // チェックを戻す（ボタンっぽく）
+    range.setValue(false);
+  }
+  return true;
+}
+
+/***********************
+ * 回答者IDを空欄だけ自動発行（U001形式）
+ ***********************/
+function fillResponderIdsIfEmpty_(sheet) {
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0].map(h => String(h).trim());
+  const idx = indexMap_(headers);
+
+  if (idx["回答者ID"] === undefined) throw new Error("名簿マスターに「回答者ID」列がありません。");
+
+  let counter = 1;
+  // 既存IDから最大を拾う（U001の最大を見て次から）
+  for (let r = 1; r < values.length; r++) {
+    const v = String(values[r][idx["回答者ID"]] || "");
+    const m = v.match(/^U(\d+)$/);
+    if (m) counter = Math.max(counter, parseInt(m[1], 10) + 1);
+  }
+
+  let filled = 0;
+  for (let r = 1; r < values.length; r++) {
+    const cell = sheet.getRange(r + 1, idx["回答者ID"] + 1);
+    const cur = String(cell.getValue() || "").trim();
+    if (cur) continue;
+
+    const newId = "U" + String(counter).padStart(3, "0");
+    cell.setValue(newId);
+    counter++;
+    filled++;
+  }
+
+  SpreadsheetApp.getUi().alert(`回答者IDを ${filled} 件発行しました。`);
+}
+
+/***********************
+ * 有効フラグを空欄だけTRUEにする
+ ***********************/
+function fillActiveFlagIfEmpty_(sheet) {
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0].map(h => String(h).trim());
+  const idx = indexMap_(headers);
+
+  if (idx["有効フラグ"] === undefined) throw new Error("名簿マスターに「有効フラグ」列がありません。");
+
+  let filled = 0;
+  for (let r = 1; r < values.length; r++) {
+    const cell = sheet.getRange(r + 1, idx["有効フラグ"] + 1);
+    const cur = String(cell.getValue() || "").trim();
+    if (cur) continue;
+
+    cell.setValue(true);
+    filled++;
+  }
+
+  SpreadsheetApp.getUi().alert(`有効フラグを ${filled} 件 TRUE にしました。`);
+}
+
+/***********************
+ * テストメールを名簿全員に送る（デモ用）
+ ***********************/
+function sendTestMailToAllFromMaster_(sheet) {
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0].map(h => String(h).trim());
+  const idx = indexMap_(headers);
+
+  const required = ["氏名", "メールアドレス", "有効フラグ"];
+  for (const k of required) {
+    if (idx[k] === undefined) throw new Error(`名簿マスターに「${k}」列がありません。`);
+  }
+
+  let sent = 0;
+  for (let r = 1; r < values.length; r++) {
+    const name = values[r][idx["氏名"]];
+    const email = values[r][idx["メールアドレス"]];
+    const active = values[r][idx["有効フラグ"]];
+
+    const isActive = (active === true) || (String(active).toUpperCase() === "TRUE") || (String(active) === "有効");
+    if (!isActive) continue;
+    if (!name || !email) continue;
+
+    const subject = "【デモ】テストメール（名簿マスター）";
+    const body =
+`${name} 様
+
+こちらはデモ用のテストメールです。
+名簿マスターから対象者を抽出し、自動送信できることの確認です。
+
+どうぞよろしくお願いいたします。`;
+
+    MailApp.sendEmail({ to: String(email), subject, body });
+    sent++;
+  }
+
+  SpreadsheetApp.getUi().alert(`テストメールを ${sent} 件送信しました。`);
+}
+
+/***********************
  * 特定の会シートだけを対象に未入金メール送信（出席者のみ）
  * 既存の demo_sendPaymentReminders_latestEventSheet のシート指定版
  ***********************/
@@ -657,5 +818,7 @@ function onOpen() {
     .addItem("入金トリガー設定（B）", "installPaymentOnEditTrigger_")
     .addItem("未入金メール送信（A）", "demo_sendPaymentReminders_latestEventSheet")
     .addItem("回作成＋送信（フォーム・個別URL）", "demo_createEvent_and_sendMails")
+    .addSeparator()
+    .addItem("名簿マスターに操作エリア設置", "setupMasterActionArea_")
     .addToUi();
 }
