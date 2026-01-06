@@ -381,7 +381,7 @@ function formatDateTime_(d) {
 /***********************
  * デモ：未入金者へ催促メール送信
  * - 最新の「会_」シートを対象
- * - 入金状況が「未入金」の人だけに送信
+ * - 出欠が「出席」かつ入金状況が「未入金」の人だけに送信
  ***********************/
 function demo_sendPaymentReminders_latestEventSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -395,7 +395,7 @@ function demo_sendPaymentReminders_latestEventSheet() {
   const idx = indexMap_(headers);
 
   // 必要列チェック
-  const required = ["氏名", "メールアドレス", "入金状況"];
+  const required = ["氏名", "メールアドレス", "入金状況", "出欠"];
   for (const k of required) {
     if (idx[k] === undefined) throw new Error(`会シートに「${k}」列が見つかりません。見出しを確認してください。`);
   }
@@ -406,9 +406,15 @@ function demo_sendPaymentReminders_latestEventSheet() {
     const name = row[idx["氏名"]];
     const email = row[idx["メールアドレス"]];
     const pay = String(row[idx["入金状況"]] || "").trim();
+    const attendance = String(row[idx["出欠"]] || "").trim(); // ★追加
 
     if (!name || !email) continue;
-    if (pay === "" || pay === "未入金") {
+
+    // ★「出席」かつ「未入金（または空）」だけ送信
+    const isUnpaid = (pay === "" || pay === "未入金");
+    const isAttending = (attendance === "出席");
+
+    if (isAttending && isUnpaid) {
       unpaidRows.push({ rowNumber: r + 1, name: String(name), email: String(email) });
     }
   }
