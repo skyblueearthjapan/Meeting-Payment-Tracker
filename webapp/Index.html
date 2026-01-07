@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <?!= include_("Style"); ?>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="title"><?= appName ?></div>
+      <div class="sub">スプレッドシートをDBとして利用（デモ→完成へ拡張可能）</div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="roster">名簿マスター</button>
+      <button class="tab" data-tab="events">イベント管理</button>
+      <button class="tab" data-tab="eventDetail">会シート（イベント詳細）</button>
+    </nav>
+
+    <main class="container">
+
+      <!-- 名簿 -->
+      <section id="tab-roster" class="panel active">
+        <div class="panelHeader">
+          <h2>名簿マスター</h2>
+          <div class="actions">
+            <button id="btnReloadRoster">再読込</button>
+            <button id="btnAssignIds">回答者ID自動採番</button>
+            <button id="btnAddRosterRow">追加</button>
+            <button id="btnSaveRoster">保存</button>
+          </div>
+        </div>
+        <div id="rosterMsg" class="msg"></div>
+        <div class="tableWrap">
+          <table id="rosterTable">
+            <thead>
+              <tr>
+                <th>回答者ID</th>
+                <th>氏名</th>
+                <th>メールアドレス</th>
+                <th>有効</th>
+                <th>備考</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- イベント -->
+      <section id="tab-events" class="panel">
+        <div class="panelHeader">
+          <h2>イベント管理</h2>
+          <div class="actions">
+            <button id="btnReloadEvents">再読込</button>
+            <button id="btnCreateEvent">新規イベント登録</button>
+          </div>
+        </div>
+
+        <div id="eventsMsg" class="msg"></div>
+
+        <div class="tableWrap">
+          <table id="eventsTable">
+            <thead>
+              <tr>
+                <th>イベントID</th>
+                <th>イベント名</th>
+                <th>開催日</th>
+                <th>回答締切</th>
+                <th>会シート</th>
+                <th>送信</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- イベント詳細 -->
+      <section id="tab-eventDetail" class="panel">
+        <div class="panelHeader">
+          <h2>会シート（イベント詳細）</h2>
+          <div class="actions">
+            <select id="eventSelect"></select>
+            <button id="btnLoadEventDetail">表示</button>
+            <button id="btnMarkPaid">入金済にする（選択）</button>
+            <button id="btnSendUnpaid">未入金メール送信（出席者のみ）</button>
+          </div>
+        </div>
+
+        <div class="filters">
+          <label><input type="checkbox" id="filterAttending"> 出席のみ</label>
+          <label><input type="checkbox" id="filterUnpaid"> 未入金のみ</label>
+        </div>
+
+        <div id="detailMsg" class="msg"></div>
+
+        <div class="tableWrap">
+          <table id="detailTable">
+            <thead>
+              <tr>
+                <th>選択</th>
+                <th>回答者ID</th>
+                <th>氏名</th>
+                <th>出欠</th>
+                <th>回答日時</th>
+                <th>入金状況</th>
+                <th>入金確認日時</th>
+                <th>備考</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+
+    <?!= include_("App.js"); ?>
+  </body>
+</html>
