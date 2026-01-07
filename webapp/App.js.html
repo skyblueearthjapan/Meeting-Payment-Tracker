@@ -1,0 +1,260 @@
+<script>
+  const state = {
+    roster: [],
+    events: [],
+    currentEventId: null,
+    detailRows: []
+  };
+
+  // --- Tabs ---
+  document.querySelectorAll(".tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+
+      btn.classList.add("active");
+      document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+    });
+  });
+
+  // --- Helpers ---
+  function setMsg(id, text, type="") {
+    const el = document.getElementById(id);
+    el.textContent = text || "";
+    el.className = "msg " + type;
+  }
+
+  function run(fn, args, onOk, onErr) {
+    const r = google.script.run
+      .withSuccessHandler(res => onOk && onOk(res))
+      .withFailureHandler(err => onErr ? onErr(err) : alert(err.message || err));
+    if (args === undefined) r[fn]();
+    else r[fn](args);
+  }
+
+  // --- Roster ---
+  function loadRoster() {
+    setMsg("rosterMsg", "読込中...");
+    run("api_getRoster", undefined, (res) => {
+      state.roster = res.rows || [];
+      renderRoster();
+      setMsg("rosterMsg", "");
+    }, (err) => setMsg("rosterMsg", err.message || String(err), "err"));
+  }
+
+  function renderRoster() {
+    const tbody = document.querySelector("#rosterTable tbody");
+    tbody.innerHTML = "";
+    state.roster.forEach(r => {
+      const tr = document.createElement("tr");
+      tr.dataset.rowNumber = r.rowNumber || "";
+
+      tr.innerHTML = `
+        <td><input class="cell id" value="${escapeHtml(r.responderId)}" placeholder="U001"></td>
+        <td><input class="cell name" value="${escapeHtml(r.name)}" placeholder="氏名"></td>
+        <td><input class="cell email" value="${escapeHtml(r.email)}" placeholder="mail@example.com"></td>
+        <td style="text-align:center;"><input class="cell active" type="checkbox" ${r.active===true || String(r.active).toUpperCase()==="TRUE" ? "checked": ""}></td>
+        <td><input class="cell note" value="${escapeHtml(r.note)}" placeholder=""></td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  function addRosterRow() {
+    state.roster.push({ responderId:"", name:"", email:"", active:true, note:"", rowNumber:null });
+    renderRoster();
+  }
+
+  function saveRoster() {
+    const rows = [];
+    document.querySelectorAll("#rosterTable tbody tr").forEach(tr => {
+      const rowNumber = tr.dataset.rowNumber ? Number(tr.dataset.rowNumber) : null;
+      const responderId = tr.querySelector(".id").value.trim();
+      const name = tr.querySelector(".name").value.trim();
+      const email = tr.querySelector(".email").value.trim();
+      const active = tr.querySelector(".active").checked;
+      const note = tr.querySelector(".note").value.trim();
+
+      rows.push({ responderId, name, email, active, note, rowNumber });
+    });
+
+    setMsg("rosterMsg", "保存中...");
+    run("api_saveRoster", rows, () => {
+      setMsg("rosterMsg", "保存しました。", "ok");
+      loadRoster();
+    }, (err) => setMsg("rosterMsg", err.message || String(err), "err"));
+  }
+
+  function assignIds() {
+    setMsg("rosterMsg", "採番中...");
+    run("api_assignResponderIdsIfEmpty", undefined, (res) => {
+      setMsg("rosterMsg", `採番完了（${res.filled}件）`, "ok");
+      loadRoster();
+    }, (err) => setMsg("rosterMsg", err.message || String(err), "err"));
+  }
+
+  // --- Events ---
+  function loadEvents() {
+    setMsg("eventsMsg", "読込中...");
+    run("api_getEvents", undefined, (res) => {
+      state.events = res.rows || [];
+      renderEvents();
+      renderEventSelect();
+      setMsg("eventsMsg", "");
+    }, (err) => setMsg("eventsMsg", err.message || String(err), "err"));
+  }
+
+  function renderEvents() {
+    const tbody = document.querySelector("#eventsTable tbody");
+    tbody.innerHTML = "";
+
+    state.events.forEach(ev => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${escapeHtml(ev.eventId)}</td>
+        <td>${escapeHtml(ev.eventName)}</td>
+        <td>${escapeHtml(ev.eventDate)}</td>
+        <td>${escapeHtml(ev.deadline)}</td>
+        <td>${escapeHtml(ev.eventSheetName)}</td>
+        <td>
+          <button class="mini" data-event="${escapeHtml(ev.eventId)}">出欠メール送信</button>
+          <div class="hint">${escapeHtml(ev.mailStatus || "")}</div>
+        </td>
+      `;
+      tr.querySelector("button.mini").addEventListener("click", () => sendAttendance(ev.eventId));
+      tbody.appendChild(tr);
+    });
+  }
+
+  function renderEventSelect() {
+    const sel = document.getElementById("eventSelect");
+    sel.innerHTML = "";
+    state.events.forEach(ev => {
+      const opt = document.createElement("option");
+      opt.value = ev.eventId;
+      opt.textContent = `${ev.eventName} (${ev.eventId})`;
+      sel.appendChild(opt);
+    });
+    if (state.events[0]) state.currentEventId = state.events[0].eventId;
+  }
+
+  function createEvent() {
+    const name = prompt("新規イベント名を入力してください（例：デモ説明会）");
+    if (!name) return;
+
+    setMsg("eventsMsg", "作成中...");
+    run("api_createEvent", { eventName: name }, (res) => {
+      setMsg("eventsMsg", `作成しました：${res.event.eventId}`, "ok");
+      loadEvents();
+      // 作成後にイベント詳細へ誘導
+      document.querySelector('.tab[data-tab="eventDetail"]').click();
+      document.getElementById("eventSelect").value = res.event.eventId;
+      loadEventDetail();
+    }, (err) => setMsg("eventsMsg", err.message || String(err), "err"));
+  }
+
+  function sendAttendance(eventId) {
+    if (!confirm(`イベント ${eventId} に対して出欠メールを一斉送信します。よろしいですか？`)) return;
+    setMsg("eventsMsg", "送信中...");
+    run("api_sendAttendanceMail", eventId, (res) => {
+      setMsg("eventsMsg", `送信しました（${res.sent}件）`, "ok");
+      loadEvents();
+    }, (err) => setMsg("eventsMsg", err.message || String(err), "err"));
+  }
+
+  // --- Event Detail ---
+  function loadEventDetail() {
+    const sel = document.getElementById("eventSelect");
+    const eventId = sel.value;
+    state.currentEventId = eventId;
+    setMsg("detailMsg", "読込中...");
+
+    run("api_getEventSheet", eventId, (res) => {
+      state.detailRows = res.rows || [];
+      renderDetail();
+      setMsg("detailMsg", "");
+    }, (err) => setMsg("detailMsg", err.message || String(err), "err"));
+  }
+
+  function renderDetail() {
+    const tbody = document.querySelector("#detailTable tbody");
+    tbody.innerHTML = "";
+
+    const onlyAtt = document.getElementById("filterAttending").checked;
+    const onlyUnpaid = document.getElementById("filterUnpaid").checked;
+
+    state.detailRows
+      .filter(r => !onlyAtt || r.attendance === "出席")
+      .filter(r => !onlyUnpaid || (r.payStatus === "" || r.payStatus === "未入金"))
+      .forEach(r => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td style="text-align:center;"><input type="checkbox" class="pick" data-id="${escapeHtml(r.responderId)}"></td>
+          <td>${escapeHtml(r.responderId)}</td>
+          <td>${escapeHtml(r.name)}</td>
+          <td>${escapeHtml(r.attendance)}</td>
+          <td>${escapeHtml(r.answeredAt)}</td>
+          <td>${escapeHtml(r.payStatus)}</td>
+          <td>${escapeHtml(r.paidAt)}</td>
+          <td>${escapeHtml(r.note)}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+  }
+
+  function markPaid() {
+    if (!state.currentEventId) return;
+
+    const ids = Array.from(document.querySelectorAll(".pick:checked")).map(x => x.dataset.id);
+    if (ids.length === 0) return alert("入金済にする参加者を選択してください。");
+
+    if (!confirm(`選択した ${ids.length}名 を「入金済」にします。よろしいですか？`)) return;
+
+    setMsg("detailMsg", "更新中...");
+    run("api_markPaid", { eventId: state.currentEventId, responderIds: ids }, (res) => {
+      setMsg("detailMsg", `入金更新しました（${res.updated}件 / ${res.paidAt}）`, "ok");
+      loadEventDetail();
+    }, (err) => setMsg("detailMsg", err.message || String(err), "err"));
+  }
+
+  function sendUnpaid() {
+    if (!state.currentEventId) return;
+    if (!confirm("出席かつ未入金の方へ未入金メールを一斉送信します。よろしいですか？")) return;
+
+    setMsg("detailMsg", "送信中...");
+    run("api_sendUnpaidMail", state.currentEventId, (res) => {
+      setMsg("detailMsg", `送信しました（${res.sent}件）`, "ok");
+      loadEventDetail();
+    }, (err) => setMsg("detailMsg", err.message || String(err), "err"));
+  }
+
+  // --- Utils ---
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  // --- Wire ---
+  document.getElementById("btnReloadRoster").addEventListener("click", loadRoster);
+  document.getElementById("btnAddRosterRow").addEventListener("click", addRosterRow);
+  document.getElementById("btnSaveRoster").addEventListener("click", saveRoster);
+  document.getElementById("btnAssignIds").addEventListener("click", assignIds);
+
+  document.getElementById("btnReloadEvents").addEventListener("click", loadEvents);
+  document.getElementById("btnCreateEvent").addEventListener("click", createEvent);
+
+  document.getElementById("btnLoadEventDetail").addEventListener("click", loadEventDetail);
+  document.getElementById("btnMarkPaid").addEventListener("click", markPaid);
+  document.getElementById("btnSendUnpaid").addEventListener("click", sendUnpaid);
+
+  document.getElementById("filterAttending").addEventListener("change", renderDetail);
+  document.getElementById("filterUnpaid").addEventListener("change", renderDetail);
+
+  // init
+  loadRoster();
+  loadEvents();
+</script>
